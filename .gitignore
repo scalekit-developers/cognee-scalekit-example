@@ -15,3 +15,6 @@ show-me-plan.html
 screenshots/01-*.png
 screenshots/02-*.png
 screenshots/.gitkeep
+
+# Written by enola when "Index this repo" runs in local mode.
+.enola/

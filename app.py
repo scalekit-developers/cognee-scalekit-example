@@ -7,14 +7,32 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-import cognee
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from scalekit import ScalekitClient
+from scalekit.common.exceptions import ScalekitNotFoundException
 from scalekit.frameworks.fastapi import ScalekitAuth
 
-from loop import USERS, is_conflict, recall_user, short_recall, user_spec
+from loop import (
+    CODE_DATASET,
+    CODE_QUESTIONS,
+    USERS,
+    ask_code,
+    check_mode_env,
+    cloud_configured,
+    code_repo_source,
+    connect,
+    index_code,
+    is_empty_memory,
+    memory_mode,
+    push_user,
+    recall_user,
+    seed_user,
+    short_recall,
+    shutdown,
+    user_spec,
+)
 
 load_dotenv()
 
@@ -29,6 +47,11 @@ missing = [name for name in REQUIRED_SCALEKIT if not os.getenv(name)]
 if missing:
     raise RuntimeError("missing env: " + ", ".join(missing))
 
+MEMORY_MODE = memory_mode()
+missing_mode = check_mode_env(MEMORY_MODE)
+if missing_mode:
+    raise RuntimeError(f"missing env for MEMORY_MODE={MEMORY_MODE}: " + ", ".join(missing_mode))
+
 DEMO_USER = "alice"
 BIND_COOKIE = "desk_customer"
 GUEST_COOKIE = "desk_guest"
@@ -38,7 +61,20 @@ PAGE_PATH = ROOT / "page.html"
 redirect_uri = os.getenv("SCALEKIT_REDIRECT_URI", "http://localhost:5001/callback")
 callback_path = urlparse(redirect_uri).path or "/callback"
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # One connection for the whole process. serve() does a health probe and an
+    # auth probe, and writes a credentials file; doing that per request was
+    # the slowest part of every click.
+    await connect(MEMORY_MODE)
+    try:
+        yield
+    finally:
+        await shutdown(MEMORY_MODE)
+
+
+app = FastAPI(lifespan=lifespan)
 auth_kwargs = {
     "env_url": os.environ["SCALEKIT_ENVIRONMENT_URL"],
     "client_id": os.environ["SCALEKIT_CLIENT_ID"],
@@ -52,19 +88,6 @@ if callback_path.endswith("/callback"):
 
 auth = ScalekitAuth(**auth_kwargs)
 auth.install(app)
-
-
-@asynccontextmanager
-async def cognee_session():
-    key = os.getenv("COGNEE_API_KEY")
-    url = os.getenv("COGNEE_BASE_URL")
-    if not key or not url:
-        raise RuntimeError("missing env: COGNEE_API_KEY, COGNEE_BASE_URL")
-    await cognee.serve(url=url, api_key=key)
-    try:
-        yield
-    finally:
-        await cognee.disconnect()
 
 
 def _secret() -> bytes:
@@ -101,6 +124,12 @@ def read_guest(request: Request) -> str | None:
 
 
 def customer_from_claims(user: dict | None) -> str | None:
+    """Map a Scalekit identity to alice or bob.
+
+    Exact `sub` match against SCALEKIT_ALICE_SUB / SCALEKIT_BOB_SUB first. The
+    text match on email/name fields below is a demo convenience for test users
+    whose token carries an email; a real app should keep only the `sub` path.
+    """
     if not user:
         return None
     sub = str(user.get("sub") or "")
@@ -108,18 +137,16 @@ def customer_from_claims(user: dict | None) -> str | None:
         return "alice"
     if sub and sub == os.getenv("SCALEKIT_BOB_SUB"):
         return "bob"
-    blob = " ".join(
-        str(user.get(key) or "")
-        for key in ("email", "preferred_username", "username", "name")
-    ).lower()
-    if blob.startswith("alice") or "alice+sktest" in blob or blob.startswith("alice@"):
-        return "alice"
-    if "alice+" in blob or blob.split("@", 1)[0] == "alice":
-        return "alice"
-    if blob.startswith("bob") or "bob+sktest" in blob or blob.startswith("bob@"):
-        return "bob"
-    if "bob+" in blob or blob.split("@", 1)[0] == "bob":
-        return "bob"
+    for key in ("email", "preferred_username", "username", "name"):
+        value = str(user.get(key) or "").lower().strip()
+        if not value:
+            continue
+        local_part = value.split("@", 1)[0]
+        base = local_part.split("+", 1)[0]
+        if base == "alice":
+            return "alice"
+        if base == "bob":
+            return "bob"
     return None
 
 
@@ -151,10 +178,18 @@ def role_payload(name: str) -> dict:
         "name": name,
         "summary": spec.get("summary") or "",
         "plan": "Pro" if name == "alice" else "not Pro",
-        "questions": [
-            {"id": item["id"], "text": item["text"]}
-            for item in spec["questions"]
-        ],
+        "questions": [{"id": item["id"], "text": item["text"]} for item in spec["questions"]],
+    }
+
+
+def memory_payload() -> dict:
+    return {
+        "mode": MEMORY_MODE,
+        "cloud_url": (os.getenv("COGNEE_BASE_URL") or None) if MEMORY_MODE == "cloud" else None,
+        "push_available": MEMORY_MODE == "local" and cloud_configured(),
+        "code_dataset": CODE_DATASET,
+        "code_source": code_repo_source(MEMORY_MODE),
+        "code_questions": [{"id": q["id"], "text": q["text"]} for q in CODE_QUESTIONS],
     }
 
 
@@ -170,9 +205,7 @@ def slack_actions():
 def slack_status(identifier: str):
     connection_name = os.getenv("SLACK_CONNECTION_NAME") or "slack"
     actions = slack_actions()
-    account = actions.get_or_create_connected_account(
-        connection_name, identifier
-    ).connected_account
+    account = actions.get_or_create_connected_account(connection_name, identifier).connected_account
     if account is not None and account.status == "ACTIVE":
         return True, None
     link = actions.get_authorization_link(
@@ -235,6 +268,7 @@ async def home(request: Request):
         "slack_active": slack_active,
         "slack_link": slack_link,
         "channel": channel,
+        "memory": memory_payload(),
     }
     page = (
         PAGE_PATH.read_text(encoding="utf-8")
@@ -271,6 +305,7 @@ async def api_status(request: Request):
         "slack_active": slack_active,
         "slack_link": slack_link,
         "channel": os.getenv("SLACK_CHANNEL") or "general",
+        "memory": memory_payload(),
     }
 
 
@@ -341,14 +376,16 @@ async def api_ask(request: Request):
     if picked is None:
         return JSONResponse({"ok": False, "error": "unknown question"}, status_code=400)
     try:
-        async with cognee_session():
-            try:
-                results = await recall_user(name, picked["text"])
-            except Exception as exc:
-                if not is_conflict(exc):
-                    raise
-                results = await recall_user(name, picked["text"])
+        results = await recall_user(name, picked["text"])
     except Exception as exc:
+        if is_empty_memory(exc):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": f"No memory for {name} yet. Click Save this customer's notes first.",
+                },
+                status_code=400,
+            )
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     answer = short_recall(results)
     expect = picked["expect"]
@@ -356,6 +393,7 @@ async def api_ask(request: Request):
     return {
         "ok": True,
         "product": "cognee",
+        "mode": MEMORY_MODE,
         "question": picked["text"],
         "dataset": name,
         "answer": answer,
@@ -368,15 +406,73 @@ async def api_seed(request: Request):
     name, err = require_customer(request)
     if err:
         return err
-    spec = user_spec(name)
-    note = spec["note"].read_text(encoding="utf-8").strip()
     try:
-        async with cognee_session():
-            await cognee.remember(note, dataset_name=name)
-            await cognee.improve(name)
+        info = await seed_user(name)
     except Exception as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return {"ok": True, "product": "cognee", "dataset": name, "seeded": True}
+    return {
+        "ok": True,
+        "product": "cognee",
+        "mode": MEMORY_MODE,
+        "dataset": name,
+        "seeded": True,
+        **info,
+    }
+
+
+@app.post("/api/push")
+async def api_push(request: Request):
+    """Upload this customer's local graph to Cognee Cloud. Local mode only."""
+    name, err = require_customer(request)
+    if err:
+        return err
+    if MEMORY_MODE != "local":
+        return JSONResponse(
+            {"ok": False, "error": "already in cloud mode; the graph is on Cloud"},
+            status_code=400,
+        )
+    if not cloud_configured():
+        return JSONResponse(
+            {"ok": False, "error": "set COGNEE_API_KEY and COGNEE_BASE_URL to push"},
+            status_code=400,
+        )
+    try:
+        info = await push_user(name)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "product": "cognee", "mode": MEMORY_MODE, **info}
+
+
+@app.post("/api/code/index")
+async def api_code_index():
+    """Build the code graph of this repo. Not customer-scoped: it is the developer's view."""
+    try:
+        info = await index_code(MEMORY_MODE)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "product": "cognee", "mode": MEMORY_MODE, **info}
+
+
+@app.post("/api/code/ask")
+async def api_code_ask(request: Request):
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    qid = str((body or {}).get("question_id") or "")
+    try:
+        answer = await ask_code(qid)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if answer.get("result") is None:
+        return {
+            "ok": False,
+            "product": "cognee",
+            "error": "no code graph yet. Click Index this repo, wait, then ask again.",
+        }
+    return {"ok": True, "product": "cognee", "mode": MEMORY_MODE, "dataset": CODE_DATASET, **answer}
 
 
 @app.post("/api/slack")
@@ -392,14 +488,23 @@ async def api_slack(request: Request):
         "Memory is that customer’s Cognee dataset only."
     )
     actions = slack_actions()
-    account = actions.get_or_create_connected_account(
-        connection_name, name
-    ).connected_account
+    missing = (
+        f'No Slack connection named "{connection_name}" in this Scalekit environment. '
+        "Add it under AgentKit → Connections (see README → Post a status to Slack), "
+        "or set SLACK_CONNECTION_NAME."
+    )
+    try:
+        account = actions.get_or_create_connected_account(connection_name, name).connected_account
+    except ScalekitNotFoundException:
+        return JSONResponse({"ok": False, "error": missing}, status_code=400)
     if account is None or account.status != "ACTIVE":
-        link = actions.get_authorization_link(
-            connection_name=connection_name,
-            identifier=name,
-        ).link
+        try:
+            link = actions.get_authorization_link(
+                connection_name=connection_name,
+                identifier=name,
+            ).link
+        except ScalekitNotFoundException:
+            return JSONResponse({"ok": False, "error": missing}, status_code=400)
         return {"ok": False, "product": "scalekit", "link": link}
     response = actions.request(
         connection_name=connection_name,
