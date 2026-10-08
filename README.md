@@ -7,6 +7,8 @@ The app does four things:
 1. It saves a short text file of notes about a customer into Cognee. Cognee is a library and a service that stores text, turns it into a graph of facts, and lets you ask questions about it later. You can run Cognee on your own computer ("local mode") or use Cognee Cloud ("cloud mode"). The app works the same way in both.
 2. It lets you click a ready-made question. Cognee reads only that customer's saved notes and sends back an answer.
 3. It lets a customer sign in with Scalekit. Scalekit is a service that runs the login page for you. After login, Scalekit tells the app which customer is sitting at the browser. Scalekit can also post a message to Slack on behalf of that customer. The Slack password (called a token) stays inside Scalekit. The app never sees it, and Cognee never sees it.
+
+Scalekit provides auth and actions on behalf of users, with 500+ connectors and 20,000+ tools.
 4. It can index this repo's own source code into Cognee and answer structural questions about it ("what calls this function?", "draw the module map") without using an LLM.
 
 The app runs at http://localhost:5001. "localhost" means your own computer.
