@@ -140,6 +140,17 @@ respan logs get <id>      # replace <id> with a real id; no angle brackets in zs
     off. This is what prints `LiteLLM.Info: ... Give Feedback`.
 11. Run Cognee scripts from this folder; elsewhere `.env` is not loaded and LLM
     calls fail (silently empty results with `2>/dev/null`).
+12. Cognee fetches the embedding tokenizer from huggingface.co; behind corp SSL
+    that fails and it falls back to TikToken (approximate token counts). Ad-hoc
+    scripts need `truststore.inject_into_ssl()` like `ask.py`; or set
+    `HF_HUB_OFFLINE=1` to skip the download.
+13. Links inside a permitted page leak titles of restricted pages. In our case
+    the 06 Leadership page sat under the 04 Onboarding page in Notion, so 04's
+    markdown ended with `<page url=...>[06-leadership-...]</page>`; Bob's graph
+    got a `06-leadership-...` node and his topic summary listed "Leadership /
+    hiring / priorities" (title only, no content). Parent / index pages do the
+    same. `ingest.py` now strips `<page>` child-page links before `remember`.
+    Debug tip: `respan logs get <id>` shows the exact context the LLM saw.
 
 ## Limits / next
 

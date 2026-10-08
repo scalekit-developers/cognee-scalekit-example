@@ -201,6 +201,9 @@ async def main():
             print(f"  would ingest: {title}")
             continue
         text = fetch_page_text(actions, account, page_id)
+        # Drop embedded child-page links: a permitted page can link to a page the
+        # user may not see, which would leak its title into their graph.
+        text = re.sub(r"<page\b[^>]*>.*?</page>", "", text, flags=re.S)
         if not text.strip():
             print(f"  skipped (no text): {title}")
             continue
