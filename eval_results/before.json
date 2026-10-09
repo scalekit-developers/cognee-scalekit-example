@@ -1,0 +1,95 @@
+{
+  "label": "before",
+  "passed": 11,
+  "total": 11,
+  "rows": [
+    {
+      "id": "db-why-alice",
+      "user": "jian.han3@gmail.com",
+      "question": "Why did we choose Postgres over MongoDB?",
+      "pass": true,
+      "why": "",
+      "answer": "## Why Postgres over MongoDB?\n\n- MongoDB had duplicate-write conflicts during peak load.\n- Finance required strict ACID transactions for reconciliation.\n- PostgreSQL performed much better in testing: **p99 120 ms vs. MongoDB\u2019s 1.8 s at 2k writes/s**.\n- Postgres also offered mature tooling and team familiarity."
+    },
+    {
+      "id": "db-why-bob",
+      "user": "bob@lumen.test",
+      "question": "Why did we choose Postgres over MongoDB?",
+      "pass": true,
+      "why": "",
+      "answer": "We chose PostgreSQL 16 because MongoDB had duplicate-write conflicts under peak load, while finance required strict transactional guarantees. Postgres provided strong ACID guarantees, mature tooling, team familiarity, and much better load-test performance (120ms vs. MongoDB\u2019s 1.8s p99 at 2k writes/s)."
+    },
+    {
+      "id": "queue-alice",
+      "user": "jian.han3@gmail.com",
+      "question": "Which queue do we use for webhook events and why not Kafka?",
+      "pass": true,
+      "why": "",
+      "answer": "We use **Amazon SQS FIFO**, with one message group per merchant and a dead-letter queue. It decouples webhook delivery from payment latency and handles slow merchants safely.\n\nKafka was deferred because it is operationally heavy for a nine-person team, with an estimated **0.5 FTE** ongoing operations cost. It may be revisited if replay or streaming analytics becomes necessary."
+    },
+    {
+      "id": "queue-bob",
+      "user": "bob@lumen.test",
+      "question": "Which queue do we use for webhook events and why not Kafka?",
+      "pass": true,
+      "why": "",
+      "answer": "We use **Amazon SQS FIFO**, with one message group per merchant and a dead-letter queue. Kafka was deferred because it\u2019s operationally heavy for a nine-person team (about 0.5 FTE); we\u2019ll reconsider it if replay or streaming analytics becomes necessary."
+    },
+    {
+      "id": "owner-ledger",
+      "user": "bob@lumen.test",
+      "question": "Who owns the ledger database migration?",
+      "pass": true,
+      "why": "",
+      "answer": "Maya Chen owns the ledger database migration."
+    },
+    {
+      "id": "onboard-bob",
+      "user": "bob@lumen.test",
+      "question": "How many reviewers are needed for changes under ledger/?",
+      "pass": true,
+      "why": "",
+      "answer": "Two reviewers are required for any change under `ledger/`."
+    },
+    {
+      "id": "outage-alice",
+      "user": "jian.han3@gmail.com",
+      "question": "What caused the Sept 2 billing outage and how long did it last?",
+      "pass": true,
+      "why": "",
+      "answer": "The upstream card network began timing out, and the payments service\u2019s uncapped retries exhausted its connection pool because the client lacked a circuit breaker and timeout cap. The outage lasted **47 minutes**, from **14:10 to 14:57 UTC** on Sept. 2."
+    },
+    {
+      "id": "outage-bob",
+      "user": "bob@lumen.test",
+      "question": "What caused the Sept 2 billing outage and how long did it last?",
+      "pass": true,
+      "why": "",
+      "answer": "The context identifies the card-network client as involved and led to adding a circuit breaker on Sept. 3, but it does not state the precise cause or how long the Sept. 2 outage lasted."
+    },
+    {
+      "id": "q4-alice",
+      "user": "jian.han3@gmail.com",
+      "question": "What are the Q4 priorities?",
+      "pass": true,
+      "why": "",
+      "answer": "Q4 priorities are:\n\n1. Launch Lumen Pay Instant Payouts by **November 30, 2026**.\n2. Reduce card-network dependency risk following the Sept. 2 outage.\n3. Close the **$40M Series B** by **December 15, 2026**."
+    },
+    {
+      "id": "q4-bob",
+      "user": "bob@lumen.test",
+      "question": "What are the Q4 priorities?",
+      "pass": true,
+      "why": "",
+      "answer": "The context does not specify the Q4 priorities."
+    },
+    {
+      "id": "series-bob",
+      "user": "bob@lumen.test",
+      "question": "How much is the Series B raise?",
+      "pass": true,
+      "why": "",
+      "answer": "The context does not specify the amount of the Series B raise."
+    }
+  ]
+}
